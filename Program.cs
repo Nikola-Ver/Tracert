@@ -25,32 +25,20 @@ public class Tracert
         {
             try
             {
-                IPHostEntry temp = Dns.Resolve(address);
+                IPHostEntry temp = Dns.GetHostEntry(address);
                 flagCorrectEnter = true;
             }
             catch (Exception) 
             {
-                Console.Write("\nБыл введен неверный адрес, повторите попытку: ");
+                Console.Write("\nБыл введен неверный адрес или отсутствует соединение, повторите попытку: ");
                 address = Console.ReadLine();
             };
         };
-        IPHostEntry iphe = Dns.Resolve(address);
+        IPHostEntry iphe = Dns.GetHostEntry(address);
         IPEndPoint iep = new IPEndPoint(iphe.AddressList[0], 0);
         EndPoint ep = (EndPoint)iep;
+        
         ICMP packet = new ICMP();
-         
-        packet.Type = 0x08;
-        packet.Code = 0x00;
-        packet.Checksum = 0;
-        Buffer.BlockCopy(BitConverter.GetBytes(1), 0, packet.Message, 0, 2);
-        Buffer.BlockCopy(BitConverter.GetBytes(1), 0, packet.Message, 2, 2);
-        data = Encoding.ASCII.GetBytes("test packet"); 
-        Buffer.BlockCopy(data, 0, packet.Message, 4, data.Length);
-        packet.MessageSize = data.Length + 4;
-        int packetsize = packet.MessageSize + 4;
-
-        UInt16 chcksum = packet.getChecksum();
-        packet.Checksum = chcksum;
 
         host.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveTimeout, waitingTime);
 
@@ -74,12 +62,13 @@ public class Tracert
         for (int i = 1; i <= ttl && flagInProgres; i++)
         {
             string currentIp = "";
+            string tempIp = "";
             Console.Write("{0,3} ", i);
             for (int j = 0; j < countTry; j++)
             {
                 host.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.IpTimeToLive, i);
                 timestart = Environment.TickCount;
-                host.SendTo(packet.getBytes(), packetsize, SocketFlags.None, iep);
+                host.SendTo(packet.getBytes(), packet.MessageSize, SocketFlags.None, iep);
                 try
                 {
                     data = new byte[1024];
@@ -88,7 +77,7 @@ public class Tracert
                     if (currentIp.Length == 0)
                         currentIp = Regex.Replace(ep.ToString(), ":.*", "");
                     else
-                        if (currentIp != Regex.Replace(ep.ToString(), ":.*", ""))
+                        if (tempIp != Regex.Replace(ep.ToString(), ":.*", ""))
                             currentIp += " Смена ip адреса на " + (j + 1).ToString() + " попытки: " + Regex.Replace(ep.ToString(), ":.*", "");
                     ICMP response = new ICMP(data, recv);
                     if (response.Type == 11)
@@ -105,33 +94,42 @@ public class Tracert
                         flagInProgres = false;
                     }
                     badcount = 0;
+                    tempIp = Regex.Replace(ep.ToString(), ":.*", "");
                 }
                 catch (SocketException)
                 {
                     Console.Write("    *   ");
                     badcount++;
-                    if (badcount == countTry * 5)
-                    {
-                        Console.WriteLine("\nНевозможно связаться с удаленным хостом.");
-                        flagInProgres = false;
-                    }
                 }
             }
             if (badcount >= countTry)
+            {
                 Console.WriteLine("   Превышен интервал ожидания для запроса.");
+                if (badcount >= countTry * 5)
+                {
+                    Console.WriteLine("\nНевозможно связаться с удаленным хостом.");
+                    flagInProgres = false;
+                }
+            }
             else
             {
                 try
                 {
                     string[] masStr = currentIp.Split(' ');
                     for (int k = 0; k < masStr.Length; k++)
-                        Console.Write("   {0} [{1}]", Dns.GetHostEntry(masStr[k]).HostName, masStr[k]);
+                        if (k == 0)
+                            Console.Write("   {0} [{1}]", Dns.GetHostEntry(masStr[k]).HostName, masStr[k]);
+                        else
+                            Console.Write(" {0} [{1}]", Dns.GetHostEntry(masStr[k]).HostName, masStr[k]);
                 }
                 catch (Exception)
                 {
                     string[] masStr = currentIp.Split(' ');
                     for (int k = 0; k < masStr.Length; k++)
-                        Console.Write("   {0}", masStr[k]);
+                        if (k == 0)
+                            Console.Write("   {0}", masStr[k]);
+                        else
+                            Console.Write(" {0}", masStr[k]);
                 };
                 Console.WriteLine();
             }
@@ -147,12 +145,21 @@ class ICMP
 {
     public byte Type;
     public byte Code;
-    public UInt16 Checksum;
+    private UInt16 Checksum;
     public int MessageSize;
     public byte[] Message = new byte[1024];
 
     public ICMP()
     {
+        byte[] data = new byte[1024];
+        Type = 0x08;
+        Code = 0x00;
+        Checksum = 0;
+        Buffer.BlockCopy(BitConverter.GetBytes(1), 0, Message, 0, 2);
+        Buffer.BlockCopy(BitConverter.GetBytes(1), 0, Message, 2, 2);
+        data = Encoding.ASCII.GetBytes("test packet");
+        Buffer.BlockCopy(data, 0, Message, 4, data.Length);
+        MessageSize = data.Length + 4;
     }
 
     public ICMP(byte[] data, int size)
@@ -188,6 +195,7 @@ class ICMP
         }
         chcksm = (chcksm >> 16) + (chcksm & 0xffff);
         chcksm += (chcksm >> 16);
+        Checksum = (UInt16)(~chcksm);
         return (UInt16)(~chcksm);
     }
 }
